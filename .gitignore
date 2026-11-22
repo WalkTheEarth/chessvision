@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+config.json
+templates.npz
+debug_*.png
+debug_*.txt
