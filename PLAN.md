@@ -28,7 +28,7 @@ monitors, without a browser extension.
 - A compact always-on-top GUI with a theme picker, live preview, and debug snapshots.
 - A 9,536-cell offline self-test covering themes, tracking, flips, promotion, and
   mate-in-one.
-- An app icon and a working Readme.
+- An app icon and a working README.
 
 ## What is fragile or missing
 
