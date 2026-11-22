@@ -214,6 +214,13 @@ class App:
         root.geometry(f'{WIN_W}x{WIN_H}+{x}+{y}')
         root.resizable(False, False)
         root.attributes('-topmost', True)
+        icon_path = core.HERE / 'icon' / 'chessvision.png'
+        if icon_path.is_file():
+            try:
+                self._icon = tk.PhotoImage(file=str(icon_path))
+                root.iconphoto(True, self._icon)
+            except tk.TclError:
+                pass
 
         outer = tk.Frame(root, bg=BG)
         outer.pack(fill='both', expand=True, padx=22, pady=18)
