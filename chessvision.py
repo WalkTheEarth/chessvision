@@ -276,6 +276,34 @@ def detect_piece_set(board_img, board_name, assets_dir, white_at_bottom, piece_s
     return results
 
 
+def board_palette(board_img, names):
+    """Median light/dark square colours of a board image."""
+    img = cv2.resize(board_img, (WORK, WORK), interpolation=cv2.INTER_AREA)
+    cells = cell_patches(img)
+    palette = {}
+    for key in (0, 1):
+        vals = [corner_colour(cell) for cell, name in zip(cells, names)
+                if square_parity(name) == key]
+        palette[key] = np.median(np.stack(vals), axis=0)
+    return palette
+
+
+def detect_board(board_img, names, assets_dir):
+    """Rank board themes by how close their square colours are to a live board."""
+    live = board_palette(board_img, names)
+    results = []
+    for path in sorted((Path(assets_dir) / 'boards').glob('*.png')):
+        board = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if board is None:
+            continue
+        sample = board_palette(board, names)
+        distance = float(np.mean([np.linalg.norm(live[key] - sample[key])
+                                  for key in (0, 1)]))
+        results.append((distance, path.stem))
+    results.sort()
+    return results
+
+
 def placement_fen(grid, names):
     board = chess.Board('8/8/8/8/8/8/8/8 w - - 0 1')
     for name, piece in zip(names, grid):

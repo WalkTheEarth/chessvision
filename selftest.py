@@ -206,6 +206,10 @@ def main():
         assert ranking and ranking[0][1] == rendered_set, (rendered_set, ranking[:5])
         print(f'piece-set auto-detect OK: {rendered_set} ->',
               [(n, round(s, 2)) for s, n in ranking[:3]])
+    probe = render(probe_fen, A / 'boards' / 'blue.png', A, 'ejgfv', coords=True)
+    boards = cv_.detect_board(probe, cv_.square_names(True), A)
+    assert boards and boards[0][1] == 'blue', boards[:5]
+    print('board auto-detect OK:', [(n, round(d, 1)) for d, n in boards[:3]])
 
     total = wrong = failures = 0
     confusions = {}

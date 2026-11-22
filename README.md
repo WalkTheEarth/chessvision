@@ -73,13 +73,13 @@ the board to be at the starting position.
 - **Flip board** — if chess.com shows the board from the other side.
 - **Resync** — re-read the position from the screen.
 - **Recalibrate** — re-select the 64 squares (and re-check the piece set).
-- **Change** (next to the theme line) — pick the pieces and board from the bundled
-  assets. The dialog previews the starting position with that theme; **Apply**
-  rebuilds the templates and remembers the choice. The live chess.com theme should
-  match the preview.
+- **Change** (next to the theme line) — shows **your live screen** next to the
+  template preview. **Match screen** reads the board and piece set from the screen;
+  **Apply** checks the choice and warns if it does not match (click Apply again to
+  force). Applying rebuilds the templates and remembers the theme.
 - **Quit**.
 - Keys: `q` quit, `s` switch side, `f` flip board, `r` resync, `[` / `]` strength,
-  `e` a secret.
+  `d` save a debug snapshot, `e` a secret.
 
 The status card shows `YOUR MOVE`, `WAITING FOR WHITE/BLACK…`, `THINKING…`,
 `READING BOARD…`, checkmate/draw, or `BOARD READ LOOKS WRONG` when the screen and the
@@ -117,9 +117,8 @@ supports the same flags and calibration.
 
 It checks five asset-built themes (including 3D and 8-bit) plus six
 screenshot-calibrated themes, castling/en-passant tracking, single-square misread
-recovery, flip detection, promoted queens on off-colour squares, piece-set
-auto-detection, a mate-in-1 from both sides' point of view, and exits non-zero on any
-error.
+recovery, flip detection, promoted queens on off-colour squares, piece-set and board auto-detection, a mate-in-1 from both sides' point of view, and
+exits non-zero on any error.
 
 ## Secrets (spoilers)
 
@@ -133,9 +132,11 @@ error.
 - The side never changes by itself. Only `--side` or `s` changes it.
 - If the capture source or size changed, the app says `SCREEN CHANGED` — press
   Recalibrate. Sharing a window (not the screen) means the app can overlap it.
-- `BOARD READ LOOKS WRONG`: the screen and tracked board disagree at the suggested
-  move. Press `f` if the board is flipped, otherwise `r`/Recalibrate. `d` in the CLI
-  mode saves a debug snapshot (`debug_*.png`/`.txt`).
+- `BOARD READ LOOKS WRONG` / `CANNOT RESYNC`: usually the theme does not match the
+  live screen. Open **Change**; compare “YOUR SCREEN” with “TEMPLATE PREVIEW”; press
+  **Match screen** and Apply. If the live preview does not look like a chessboard,
+  press **Recalibrate** (the board area is stale). Press `d` to save a debug snapshot
+  (`debug_*.png`/`.txt`) if you want help diagnosing it.
 - Colour confusion or impossible moves: use asset mode with the exact theme names.
   Asset templates know every piece's colour on both square colours. The calibration
   auto-detects the piece set from the live screen.

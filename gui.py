@@ -191,6 +191,7 @@ class App:
         self.cal_off = (0, 0)
         self.cal_photo = None
         self.board_photo = None
+        self.last_roi_img = None
         self.frame_size = None
         self.pin_var = tk.BooleanVar(value=True)
 
@@ -368,6 +369,8 @@ class App:
             self.adjust_skill(-1)
         elif ch == ']':
             self.adjust_skill(1)
+        elif ch == 'd':
+            self.save_snapshot()
         elif ch == 'e':
             self.fish = not self.fish
             self.fish_label.config(text=' ><>' if self.fish else '')
@@ -615,6 +618,7 @@ class App:
         if frame is not None:
             self.frame_size = [int(frame.shape[1]), int(frame.shape[0])]
             roi_img = core.crop_roi(frame, self.roi)
+            self.last_roi_img = roi_img
             grid = self.rec.classify(roi_img, self.args.threshold)
             self.pending = self.committed = grid
             after, _made = core.advance(chess.Board(), grid, self.rec.names)
@@ -747,6 +751,7 @@ class App:
                     self.root.after(80, self.tick)
                     return
                 roi_img = core.crop_roi(frame, self.roi)
+                self.last_roi_img = roi_img
                 try:
                     grid = self.rec.classify(roi_img, self.args.threshold)
                 except Exception:
@@ -785,6 +790,51 @@ class App:
             self.set_view('info', 'THEME CHANGED', '', f'{pieces} · {board_name}')
         return None
 
+    def live_roi_image(self):
+        if self.last_roi_img is not None:
+            return self.last_roi_img
+        if self.roi is None:
+            return None
+        frame = self.cap.grab(timeout=5)
+        return core.crop_roi(frame, self.roi) if frame is not None else None
+
+    def theme_mismatch(self, live_img, pieces, board_name):
+        """Describe why a theme does not match the live screen, or None."""
+        names = core.square_names(self.bottom == 'white')
+        boards = core.detect_board(live_img, names, self.assets_dir)
+        piece_list = sorted(p.name for p in (self.assets_dir / 'pieces').iterdir()
+                            if p.is_dir())
+        ranking = core.detect_piece_set(live_img, board_name, self.assets_dir,
+                                        self.bottom == 'white', piece_list)
+        best_dist, best_board = boards[0] if boards else (0.0, board_name)
+        chosen_dist = next((d for d, b in boards if b == board_name), 10 ** 9)
+        best_score, best_pieces = ranking[0] if ranking else (1.0, pieces)
+        chosen_score = next((s for s, p in ranking if p == pieces), 0.0)
+        board_bad = bool(boards) and board_name != best_board and chosen_dist > best_dist + 12
+        pieces_bad = bool(ranking) and pieces != best_pieces and best_score > chosen_score + 0.02
+        if board_bad or pieces_bad:
+            return (f'Your screen looks like {best_pieces} · {best_board}, not '
+                    f'{pieces} · {board_name}.')
+        return None
+
+    def save_snapshot(self):
+        if self.last_roi_img is None or self.rec is None:
+            self.set_view('error', 'NO SNAPSHOT', '', 'No board frame yet.')
+            return
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        image_path = core.HERE / f'debug_{stamp}.png'
+        text_path = core.HERE / f'debug_{stamp}.txt'
+        cv2.imwrite(str(image_path), self.last_roi_img)
+        grid = self.committed if self.committed is not None else self.pending
+        shown = grid if grid is not None else [None] * 64
+        text_path.write_text(
+            f'side={side_name(self.user_color)} skill={self.skill} '
+            f'pieces={self.pieces} board={self.board_name} bottom={self.bottom} '
+            f'frame_size={self.frame_size}\nfen={self.board.fen()}\n'
+            + '\n'.join(f'{n}: {p}' for n, p in zip(self.rec.names, shown)) + '\n')
+        print('Saved', image_path, text_path)
+        self.set_view('info', 'SNAPSHOT SAVED', '', image_path.name)
+
     def open_theme_dialog(self):
         top = tk.Toplevel(self.root)
         top.title('Change theme')
@@ -795,7 +845,7 @@ class App:
         self.root.update_idletasks()
         rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
         rw, rh = self.root.winfo_width(), self.root.winfo_height()
-        w, h = 470, 620
+        w, h = 560, 720
         top.geometry(f'{w}x{h}+{rx + (rw - w) // 2}+{ry + (rh - h) // 2}')
 
         pieces_list = sorted(p.name for p in (self.assets_dir / 'pieces').iterdir()
@@ -807,19 +857,43 @@ class App:
             return
         default_pieces = self.pieces if self.pieces in pieces_list else pieces_list[0]
         default_board = self.board_name if self.board_name in boards_list else boards_list[0]
+        live_img = self.live_roi_image()
+        state = {'force': False}
 
         tk.Label(top, text='THEME', bg=BG, fg=AMBER,
                  font=(FONT, 9, 'bold')).pack(anchor='w', padx=20, pady=(16, 2))
-        tk.Label(top, text='Templates are rebuilt from these PNGs; the live screen '
-                           'should use the same theme.', bg=BG, fg=MUTED,
-                 font=(FONT, 9), wraplength=410, justify='left').pack(
+        tk.Label(top, text='Pick the pair your chess.com board uses. Apply checks it '
+                           'against the live screen.', bg=BG, fg=MUTED,
+                 font=(FONT, 9), wraplength=510, justify='left').pack(
             anchor='w', padx=20, pady=(0, 10))
 
-        preview = tk.Frame(top, bg=BORDER, padx=1, pady=1)
-        preview.pack(pady=(0, 14))
-        pcanvas = tk.Canvas(preview, width=240, height=240, bg='#0b0d11',
-                            highlightthickness=0)
-        pcanvas.pack()
+        previews = tk.Frame(top, bg=BG)
+        previews.pack(fill='x', padx=20)
+        for col, title in enumerate(('YOUR SCREEN', 'TEMPLATE PREVIEW')):
+            tk.Label(previews, text=title, bg=BG, fg=MUTED,
+                     font=(FONT, 8, 'bold')).grid(row=0, column=col, pady=(0, 4))
+        live_canvas = tk.Canvas(previews, width=200, height=200, bg='#0b0d11',
+                                highlightthickness=1, highlightbackground=BORDER)
+        live_canvas.grid(row=1, column=0, padx=(0, 10))
+        theme_canvas = tk.Canvas(previews, width=200, height=200, bg='#0b0d11',
+                                 highlightthickness=1, highlightbackground=BORDER)
+        theme_canvas.grid(row=1, column=1, padx=(10, 0))
+        previews.columnconfigure(0, weight=1)
+        previews.columnconfigure(1, weight=1)
+
+        def draw(canvas, img, size=200, empty='no live frame'):
+            canvas.delete('all')
+            if img is None:
+                canvas.create_text(size // 2, size // 2, text=empty, fill=MUTED,
+                                   font=(FONT, 9))
+                return
+            pic = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+            photo = ImageTk.PhotoImage(
+                Image.fromarray(cv2.cvtColor(pic, cv2.COLOR_BGR2RGB)))
+            canvas.create_image(size // 2, size // 2, image=photo)
+            canvas.image = photo
+
+        draw(live_canvas, live_img)
 
         style = ttk.Style(top)
         style.theme_use('clam')
@@ -834,7 +908,7 @@ class App:
         top.option_add('*TCombobox*Listbox.selectForeground', ACCENT_DARK)
 
         form = tk.Frame(top, bg=BG)
-        form.pack(fill='x', padx=20)
+        form.pack(fill='x', padx=20, pady=(14, 4))
         tk.Label(form, text='Pieces', bg=BG, fg=MUTED, font=(FONT, 9, 'bold')).grid(
             row=0, column=0, sticky='w', pady=4)
         pvar = tk.StringVar(value=default_pieces)
@@ -849,29 +923,67 @@ class App:
         bcombo.grid(row=1, column=1, sticky='ew', padx=(12, 0), pady=4)
         form.columnconfigure(1, weight=1)
 
-        def update_preview(*_):
-            img = theme_preview(self.assets_dir, bvar.get(), pvar.get(), 240)
-            if img is None:
-                return
-            photo = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
-            pcanvas.delete('all')
-            pcanvas.create_image(120, 120, image=photo)
-            pcanvas.image = photo
+        message = tk.Label(top, text='', bg=BG, fg=MUTED, font=(FONT, 9),
+                           wraplength=510, justify='left')
+        message.pack(anchor='w', padx=20, pady=(8, 0))
 
-        pcombo.bind('<<ComboboxSelected>>', update_preview)
-        bcombo.bind('<<ComboboxSelected>>', update_preview)
+        def update_preview(*_):
+            draw(theme_canvas, theme_preview(self.assets_dir, bvar.get(),
+                                             pvar.get(), 200), empty='no preview')
+
+        def changed(*_):
+            state['force'] = False
+            message.config(text='')
+            update_preview()
+
+        def match_screen():
+            nonlocal live_img
+            live_img = self.live_roi_image()
+            if live_img is None:
+                message.config(text='No live frame yet. Recalibrate first.', fg=RED)
+                return
+            draw(live_canvas, live_img)
+            message.config(text='Reading your screen…', fg=MUTED)
+            top.update()
+            names = core.square_names(self.bottom == 'white')
+            boards = core.detect_board(live_img, names, self.assets_dir)
+            if boards:
+                bvar.set(boards[0][1])
+            ranking = core.detect_piece_set(live_img, bvar.get(), self.assets_dir,
+                                            self.bottom == 'white', pieces_list)
+            if ranking:
+                pvar.set(ranking[0][1])
+            state['force'] = False
+            update_preview()
+            message.config(text=f'Matched {pvar.get()} · {bvar.get()} to your screen.',
+                           fg=ACCENT)
+
+        pcombo.bind('<<ComboboxSelected>>', changed)
+        bcombo.bind('<<ComboboxSelected>>', changed)
         update_preview()
 
         def apply():
-            error = self.apply_theme(pvar.get(), bvar.get())
+            pieces, board_name = pvar.get(), bvar.get()
+            if not state['force'] and live_img is not None:
+                message.config(text='Checking your screen…', fg=MUTED)
+                top.update()
+                warn = self.theme_mismatch(live_img, pieces, board_name)
+                if warn:
+                    message.config(
+                        text=warn + '  Use “Match screen”, or click Apply again to force.',
+                        fg=AMBER)
+                    state['force'] = True
+                    return
+                message.config(text='')
+            error = self.apply_theme(pieces, board_name)
             if error:
-                tk.Label(top, text=error, bg=BG, fg=RED, font=(FONT, 9),
-                         wraplength=410, justify='left').pack(padx=20, pady=4)
+                message.config(text=error, fg=RED)
             else:
                 top.destroy()
 
         row = tk.Frame(top, bg=BG)
         row.pack(fill='x', padx=20, pady=16)
+        self._button(row, 'Match screen', match_screen, small=True).pack(side='left')
         self._button(row, 'Apply', apply, accent=True).pack(side='right')
         self._button(row, 'Cancel', top.destroy, small=True).pack(side='right', padx=6)
 
@@ -919,7 +1031,8 @@ class App:
                 rebuilt = core.rebuild(source, self.rec.names, not self.user_color)
         if rebuilt is None:
             self.rec.names = core.flip_mapping(self.rec.names)
-            self.set_view('error', 'CANNOT FLIP', '', 'Check the board selection.')
+            self.set_view('error', 'CANNOT FLIP', '',
+                          'Check the board selection, or open Change and match the theme.')
             return
         self.board = rebuilt
         self.committed = source
@@ -937,7 +1050,9 @@ class App:
             return
         rebuilt, chosen = core.resync(source, self.rec.names, self.board, self.user_color)
         if rebuilt is None:
-            self.set_view('error', 'CANNOT RESYNC', '', 'Check the board selection.')
+            self.set_view('error', 'CANNOT RESYNC', '',
+                          'Press Recalibrate, or open Change and match the theme to your '
+                          'screen.')
             return
         self.rec.names = chosen
         self.board = rebuilt
