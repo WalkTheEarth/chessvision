@@ -9,7 +9,8 @@ evaluation or mate distance.
 
 - Your side is fixed. It changes only with `--side` or the `s` key — never on its own.
 - Best results come from **asset mode**: templates built from the exact board/piece
-  images in `assets/` (`--pieces`, `--board`). No colour guessing.
+  images in `assets/` (`--pieces`, `--board`, or the in-app **Change** dialog with a
+  live preview). No colour guessing.
 - Screenshot calibration is the fallback when you do not know the theme names.
 - Automatic resync and board-flip handling, a suggestion sanity guard, adjustable
   Stockfish strength, and an offline self-test.
@@ -56,7 +57,8 @@ On the first run (or after `--recalibrate`) the app asks for the board area:
 ```
 
 `ls assets/boards assets/pieces` lists the theme names. Once a theme is chosen it is
-remembered; `--recalibrate` only re-selects the board area.
+remembered; `--recalibrate` only re-selects the board area. You can switch themes any
+time with **Change** in the app (preview included) — no restart required.
 
 If you change what you share (window ↔ screen) or resize it, the capture size changes
 and the app asks you to recalibrate. The screenshot fallback (`--screenshot`) requires
@@ -71,6 +73,10 @@ the board to be at the starting position.
 - **Flip board** — if chess.com shows the board from the other side.
 - **Resync** — re-read the position from the screen.
 - **Recalibrate** — re-select the 64 squares (and re-check the piece set).
+- **Change** (next to the theme line) — pick the pieces and board from the bundled
+  assets. The dialog previews the starting position with that theme; **Apply**
+  rebuilds the templates and remembers the choice. The live chess.com theme should
+  match the preview.
 - **Quit**.
 - Keys: `q` quit, `s` switch side, `f` flip board, `r` resync, `[` / `]` strength,
   `e` a secret.

@@ -10,6 +10,7 @@ import chess.engine
 import cv2
 import numpy as np
 import tkinter as tk
+from tkinter import ttk
 from PIL import Image, ImageTk
 
 import chessvision as core
@@ -35,6 +36,32 @@ WIN_W, WIN_H = 1080, 940
 
 def side_name(color):
     return 'White' if color == chess.WHITE else 'Black'
+
+
+def theme_preview(assets_dir, board_name, pieces_name, size=240):
+    """Render the starting position from the asset PNGs for the theme dialog."""
+    board_path = Path(assets_dir) / 'boards' / f'{board_name}.png'
+    pieces_dir = Path(assets_dir) / 'pieces' / pieces_name
+    board = cv2.imread(str(board_path), cv2.IMREAD_COLOR)
+    if board is None or not pieces_dir.is_dir():
+        return None
+    board = cv2.resize(board, (size, size), interpolation=cv2.INTER_AREA)
+    cell = size // 8
+    for square, piece in chess.Board().piece_map().items():
+        code = ('w' if piece.color else 'b') + piece.symbol().lower()
+        sprite = cv2.imread(str(pieces_dir / f'{code}.png'), cv2.IMREAD_UNCHANGED)
+        if sprite is None:
+            continue
+        sprite = cv2.resize(sprite, (cell, cell), interpolation=cv2.INTER_AREA)
+        rgb = sprite[:, :, :3].astype(np.float32)
+        alpha = (sprite[:, :, 3:4].astype(np.float32) / 255
+                 if sprite.shape[2] == 4 else np.ones((cell, cell, 1), np.float32))
+        r = 7 - chess.square_rank(square)
+        c = chess.square_file(square)
+        y0, x0 = r * cell, c * cell
+        roi = board[y0:y0 + cell, x0:x0 + cell].astype(np.float32)
+        board[y0:y0 + cell, x0:x0 + cell] = (alpha * rgb + (1 - alpha) * roi).astype(np.uint8)
+    return board
 
 
 def launch(args):
@@ -288,9 +315,13 @@ class App:
         grid.columnconfigure(0, weight=1)
         grid.columnconfigure(1, weight=1)
 
-        self.theme_label = tk.Label(right, text='', bg=BG, fg=MUTED, font=(FONT, 9),
-                                    wraplength=400, justify='left')
-        self.theme_label.pack(anchor='w', pady=(12, 6))
+        self.theme_row = tk.Frame(right, bg=BG)
+        self.theme_row.pack(fill='x', pady=(12, 6))
+        self.theme_label = tk.Label(self.theme_row, text='', bg=BG, fg=MUTED,
+                                    font=(FONT, 9), wraplength=330, justify='left')
+        self.theme_label.pack(side='left', fill='x', expand=True)
+        self._button(self.theme_row, 'Change', self.open_theme_dialog,
+                     small=True).pack(side='right')
         pin = tk.Checkbutton(right, text='Keep window on top', variable=self.pin_var,
                              command=self.toggle_pin, bg=BG, fg=MUTED, selectcolor=CARD,
                              activebackground=BG, activeforeground=TEXT, bd=0,
@@ -500,7 +531,7 @@ class App:
         self.status_card.pack_forget()
         self.status_card.pack(fill='x')
         self.controls_card.pack_forget()
-        self.controls_card.pack(fill='x', pady=(12, 0), before=self.theme_label)
+        self.controls_card.pack(fill='x', pady=(12, 0), before=self.theme_row)
         self.canvas.configure(cursor='arrow')
         self.mode = 'play'
 
@@ -732,6 +763,117 @@ class App:
                     self._draw_play(roi_img)
                     self._auto_resync(now)
         self.root.after(80, self.tick)
+
+    # -------------------------------------------------------------- theme
+
+    def apply_theme(self, pieces, board_name):
+        try:
+            rec = core.build_from_assets(self.assets_dir, board_name, pieces,
+                                         self.bottom == 'white')
+        except SystemExit as exc:
+            return str(exc)
+        self.use_assets = True
+        self.pieces, self.board_name = pieces, board_name
+        self.rec = rec
+        rec.save()
+        self._save()
+        self._update_theme_label()
+        self.pending = self.committed = None
+        self.analysis_id += 1
+        self.move = None
+        if self.mode == 'play':
+            self.set_view('info', 'THEME CHANGED', '', f'{pieces} · {board_name}')
+        return None
+
+    def open_theme_dialog(self):
+        top = tk.Toplevel(self.root)
+        top.title('Change theme')
+        top.configure(bg=BG)
+        top.transient(self.root)
+        top.resizable(False, False)
+        top.grab_set()
+        self.root.update_idletasks()
+        rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+        w, h = 470, 620
+        top.geometry(f'{w}x{h}+{rx + (rw - w) // 2}+{ry + (rh - h) // 2}')
+
+        pieces_list = sorted(p.name for p in (self.assets_dir / 'pieces').iterdir()
+                             if p.is_dir())
+        boards_list = sorted(p.stem for p in (self.assets_dir / 'boards').glob('*.png'))
+        if not pieces_list or not boards_list:
+            tk.Label(top, text='No board/piece assets found in ./assets.', bg=BG,
+                     fg=RED, font=(FONT, 10)).pack(padx=20, pady=20)
+            return
+        default_pieces = self.pieces if self.pieces in pieces_list else pieces_list[0]
+        default_board = self.board_name if self.board_name in boards_list else boards_list[0]
+
+        tk.Label(top, text='THEME', bg=BG, fg=AMBER,
+                 font=(FONT, 9, 'bold')).pack(anchor='w', padx=20, pady=(16, 2))
+        tk.Label(top, text='Templates are rebuilt from these PNGs; the live screen '
+                           'should use the same theme.', bg=BG, fg=MUTED,
+                 font=(FONT, 9), wraplength=410, justify='left').pack(
+            anchor='w', padx=20, pady=(0, 10))
+
+        preview = tk.Frame(top, bg=BORDER, padx=1, pady=1)
+        preview.pack(pady=(0, 14))
+        pcanvas = tk.Canvas(preview, width=240, height=240, bg='#0b0d11',
+                            highlightthickness=0)
+        pcanvas.pack()
+
+        style = ttk.Style(top)
+        style.theme_use('clam')
+        style.configure('Dark.TCombobox', fieldbackground=CARD2, background=CARD2,
+                        foreground=TEXT, arrowcolor=TEXT, bordercolor=BORDER,
+                        lightcolor=CARD2, darkcolor=CARD2, padding=6)
+        style.map('Dark.TCombobox', fieldbackground=[('readonly', CARD2)],
+                  foreground=[('readonly', TEXT)])
+        top.option_add('*TCombobox*Listbox.background', CARD2)
+        top.option_add('*TCombobox*Listbox.foreground', TEXT)
+        top.option_add('*TCombobox*Listbox.selectBackground', ACCENT)
+        top.option_add('*TCombobox*Listbox.selectForeground', ACCENT_DARK)
+
+        form = tk.Frame(top, bg=BG)
+        form.pack(fill='x', padx=20)
+        tk.Label(form, text='Pieces', bg=BG, fg=MUTED, font=(FONT, 9, 'bold')).grid(
+            row=0, column=0, sticky='w', pady=4)
+        pvar = tk.StringVar(value=default_pieces)
+        pcombo = ttk.Combobox(form, textvariable=pvar, values=pieces_list,
+                              state='readonly', style='Dark.TCombobox', width=24)
+        pcombo.grid(row=0, column=1, sticky='ew', padx=(12, 0), pady=4)
+        tk.Label(form, text='Board', bg=BG, fg=MUTED, font=(FONT, 9, 'bold')).grid(
+            row=1, column=0, sticky='w', pady=4)
+        bvar = tk.StringVar(value=default_board)
+        bcombo = ttk.Combobox(form, textvariable=bvar, values=boards_list,
+                              state='readonly', style='Dark.TCombobox', width=24)
+        bcombo.grid(row=1, column=1, sticky='ew', padx=(12, 0), pady=4)
+        form.columnconfigure(1, weight=1)
+
+        def update_preview(*_):
+            img = theme_preview(self.assets_dir, bvar.get(), pvar.get(), 240)
+            if img is None:
+                return
+            photo = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
+            pcanvas.delete('all')
+            pcanvas.create_image(120, 120, image=photo)
+            pcanvas.image = photo
+
+        pcombo.bind('<<ComboboxSelected>>', update_preview)
+        bcombo.bind('<<ComboboxSelected>>', update_preview)
+        update_preview()
+
+        def apply():
+            error = self.apply_theme(pvar.get(), bvar.get())
+            if error:
+                tk.Label(top, text=error, bg=BG, fg=RED, font=(FONT, 9),
+                         wraplength=410, justify='left').pack(padx=20, pady=4)
+            else:
+                top.destroy()
+
+        row = tk.Frame(top, bg=BG)
+        row.pack(fill='x', padx=20, pady=16)
+        self._button(row, 'Apply', apply, accent=True).pack(side='right')
+        self._button(row, 'Cancel', top.destroy, small=True).pack(side='right', padx=6)
 
     # ----------------------------------------------------------- controls
 
