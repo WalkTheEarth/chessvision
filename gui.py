@@ -128,6 +128,7 @@ def launch(args):
         if probe_size is not None:
             cfg['frame_size'] = probe_size
         core.CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+        app.place_beside_roi()
         app.start_play()
     else:
         if has_config and has_templates:
@@ -330,8 +331,8 @@ class App:
         pin.pack(anchor='w')
         self.hint = tk.Label(
             right,
-            text='Tip: share the browser window, not the screen, so this window can '
-                 'overlap it safely.',
+            text='Tip: this window parks right of the board. On a narrow screen, '
+                 'move it clear of the board or share the browser window instead.',
             bg=BG, fg='#667080', font=(FONT, 8), wraplength=400, justify='left')
         self.hint.pack(anchor='w', pady=(10, 0))
 
@@ -390,6 +391,16 @@ class App:
         self.theme_label.config(
             text=f'{src}   ·   {self.bottom.capitalize()} at the bottom   ·   '
                  f'skill {self.skill}')
+
+    def place_beside_roi(self):
+        """Park the window right of the board so a screen capture cannot see it."""
+        if self.roi is None:
+            return
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        x = int((self.roi[0] + self.roi[2]) * sw) + 16
+        if x + WIN_W <= sw:  # otherwise keep the centred position; share the window
+            self.root.geometry(f'{WIN_W}x{WIN_H}+{x}+{max(0, (sh - WIN_H) // 2)}')
+            self.root.update_idletasks()
 
     def _save(self, updates=None):
         if updates:
@@ -594,6 +605,7 @@ class App:
             self._update_theme_label()
             self._cal_status('Board saved.')
         self._show_play_ui()
+        self.place_beside_roi()
         self.start_play()
 
     # -------------------------------------------------------------- play
@@ -629,6 +641,10 @@ class App:
                                               self.user_color)
                 self.rec.names = chosen
                 self.board = rebuilt if rebuilt is not None else chess.Board()
+                if rebuilt is None:
+                    # The first frame may show our own window over the board;
+                    # retry once the screen is readable instead of freezing.
+                    self.pending = self.committed = None
             self.tracking_ok, self.missed = True, 0
             self._refresh_view_for_turn()
             self._draw_play(roi_img)
