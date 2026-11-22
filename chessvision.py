@@ -467,7 +467,8 @@ class ScreenCast:
                 'org.freedesktop.portal.Desktop', 'org.freedesktop.portal.Request',
                 'Response', handle, None, Gio.DBusSignalFlags.NONE, on_response)
         if method == 'Start':
-            print('Waiting for you to approve the GNOME screen-share prompt...', flush=True)
+            print('GNOME screen-share prompt: pick the browser window with the chessboard '
+                  '(recommended) or the screen, then Share.', flush=True)
         timeout = GLib.timeout_add_seconds(300, lambda: loop.quit() or False)
         loop.run()
         GLib.source_remove(timeout)
@@ -489,7 +490,7 @@ class ScreenCast:
         session = res['session_handle']
         self._portal_request(
             'SelectSources', lambda o: GLib.Variant('(oa{sv})', (session, o)),
-            {'types': 1, 'multiple': False, 'cursor_mode': 1})  # monitors, no cursor
+            {'types': 3, 'multiple': False, 'cursor_mode': 1})  # screens or windows
         res = self._portal_request(
             'Start', lambda o: GLib.Variant('(osa{sv})', (session, '', o)), {})
         node = res['streams'][0][0]
@@ -545,11 +546,11 @@ def side_name(color):
     return 'White' if color == chess.WHITE else 'Black'
 
 
-def analyse(engine, board, think, color=chess.WHITE):
+def evaluate(engine, board, think, color=chess.WHITE):
     info = engine.analyse(board, chess.engine.Limit(time=think))
     pv = info.get('pv') or []
     if not pv:
-        return None, 'No move found'
+        return None, '', 'no move found'
     move = pv[0]
     san = board.san(move)
     score = info['score'].pov(color)
@@ -560,6 +561,13 @@ def analyse(engine, board, think, color=chess.WHITE):
             verdict += '   ><>'
     else:
         verdict = f'{score.score() / 100:+.2f}'
+    return move, san, verdict
+
+
+def analyse(engine, board, think, color=chess.WHITE):
+    move, san, verdict = evaluate(engine, board, think, color)
+    if move is None:
+        return None, verdict
     return move, f'Best: {san}   {verdict}'
 
 
@@ -629,7 +637,8 @@ def calibrate(args, cap, side_key, skill):
 
     CONFIG_PATH.write_text(json.dumps({
         'roi': roi, 'side': side_key, 'skill': skill,
-        'bottom': 'white' if rec.names[0] == 'a8' else 'black'}, indent=2))
+        'bottom': 'white' if rec.names[0] == 'a8' else 'black',
+        'frame_size': [int(frame.shape[1]), int(frame.shape[0])]}, indent=2))
     rec.save()
     print(f'Calibrated. You play {side_key.capitalize()}, Stockfish skill {skill}.',
           'White is at the bottom.' if rec.names[0] == 'a8'
@@ -652,7 +661,8 @@ def calibrate_assets(cap, side_key, skill, assets_dir, board_name, pieces_name, 
     rec = build_from_assets(assets_dir, board_name, pieces_name, bottom == 'white')
     CONFIG_PATH.write_text(json.dumps({
         'roi': roi, 'side': side_key, 'skill': skill, 'pieces': pieces_name,
-        'board': board_name, 'bottom': bottom}, indent=2))
+        'board': board_name, 'bottom': bottom,
+        'frame_size': [int(frame.shape[1]), int(frame.shape[0])]}, indent=2))
     rec.save()
     print(f'Calibrated from assets: {pieces_name} pieces on the {board_name} board.')
     kings = sum(1 for piece in rec.classify(roi_img) if piece in ('wk', 'bk'))
@@ -870,11 +880,17 @@ def main():
                     help='side at the bottom of the board (default: last used, else your side)')
     ap.add_argument('--screenshot', action='store_true',
                     help='ignore --pieces/--board and use the screenshot calibration')
+    ap.add_argument('--cli', action='store_true', help='terminal/OpenCV mode instead of the GUI')
     ap.add_argument('--engine', help='path to a UCI engine (default: stockfish)')
     ap.add_argument('--think', type=float, default=1.0, help='engine seconds per move (default 1.0)')
     ap.add_argument('--threshold', type=float, default=THRESHOLD,
                     help=f'piece-match threshold (default {THRESHOLD})')
     args = ap.parse_args()
+
+    if not args.cli:
+        import gui
+        gui.launch(args)
+        return
 
     cfg = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
     side_key = args.side or cfg.get('side', 'white')
