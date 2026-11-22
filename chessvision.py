@@ -315,6 +315,25 @@ def detect_board(board_img, names, assets_dir):
     return results
 
 
+def detect_theme(board_img, assets_dir, white_at_bottom):
+    """Piece set and board that confidently explain a live board, else None.
+
+    Recovers a saved theme that no longer matches the screen. Refuses to guess
+    when the image is not a recognisable board; a wrong theme then shows
+    "READING BOARD" instead of hints for a board the app cannot see.
+    """
+    boards = detect_board(board_img, square_names(white_at_bottom), assets_dir)
+    if not boards or boards[0][0] > 20:
+        return None
+    piece_sets = sorted(p.name for p in (Path(assets_dir) / 'pieces').iterdir()
+                        if p.is_dir())
+    ranking = detect_piece_set(board_img, boards[0][1], assets_dir,
+                               white_at_bottom, piece_sets)
+    if not ranking or ranking[0][0] < THRESHOLD:
+        return None
+    return ranking[0][1], boards[0][1]
+
+
 def placement_fen(grid, names):
     board = chess.Board('8/8/8/8/8/8/8/8 w - - 0 1')
     for name, piece in zip(names, grid):

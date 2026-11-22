@@ -265,9 +265,13 @@ capture size. The CLI uses the same file.
 
 ## Troubleshooting
 
+See [DIAGNOSTICS.md](DIAGNOSTICS.md) for the full triage flow, debug snapshot
+guide, reset procedures, and known limitations.
+
 | Symptom | What to do |
 | --- | --- |
 | `SCREEN CHANGED` | The capture source or size changed. Press **Recalibrate**. |
+| `READING BOARD…` stays | Show the board inside the calibrated area. If it is visible, press **Recalibrate** and drag tightly around the 64 squares only — margins shift every cell and nothing matches. |
 | `BOARD READ LOOKS WRONG`, `CANNOT RESYNC`, or impossible moves | Usually the theme does not match the live screen. Open **Change**, compare “YOUR SCREEN” with “TEMPLATE PREVIEW”, press **Match screen**, then **Apply**. If the live preview is not a chessboard, press **Recalibrate**. |
 | Pieces are missed or colours are confused | Use asset mode with the exact theme names; try a higher/lower `--threshold`; very low-contrast themes are the hardest. |
 | `Stockfish not found` | Install Stockfish or pass `--engine /path/to/stockfish`. |

@@ -210,6 +210,10 @@ def main():
     boards = cv_.detect_board(probe, cv_.square_names(True), A)
     assert boards and boards[0][1] == 'blue', boards[:5]
     print('board auto-detect OK:', [(n, round(d, 1)) for d, n in boards[:3]])
+    assert cv_.detect_theme(probe, A, True) == ('ejgfv', 'blue')
+    noise = np.random.default_rng(0).integers(0, 255, (600, 600, 3), dtype=np.uint8)
+    assert cv_.detect_theme(noise, A, True) is None  # never guess from a non-board
+    print('theme auto-detect OK: ejgfv/blue; non-board refused')
 
     total = wrong = failures = 0
     confusions = {}

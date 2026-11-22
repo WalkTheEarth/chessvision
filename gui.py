@@ -573,7 +573,10 @@ class App:
             if ranking:
                 best_score, best_set = ranking[0]
                 current = next((s for s, p in ranking if p == self.pieces), 0.0)
-                if best_set != self.pieces and best_score > current + 0.02:
+                # A sloppy box scores poorly for every set; do not let that
+                # silently switch to a wrong theme.
+                if (best_score >= core.THRESHOLD and best_set != self.pieces
+                        and best_score > current + 0.02):
                     self.pieces = best_set
                     self._cal_status(f'Using {best_set} pieces (match {best_score:.2f}).')
                 rec = core.build_from_assets(self.assets_dir, self.board_name, self.pieces,
@@ -639,24 +642,48 @@ class App:
             roi_img = core.crop_roi(frame, self.roi)
             self.last_roi_img = roi_img
             grid = self.rec.classify(roi_img, self.args.threshold)
-            self.pending = self.committed = grid
-            after, _made = core.advance(chess.Board(), grid, self.rec.names)
-            if after is not None:
-                self.board = after
+            board, chosen = self._read_start(grid)
+            if board is None and self.use_assets:
+                # The saved theme may have drifted (a wrong one reads every
+                # square as empty). Match the live screen once before giving up.
+                self.set_view('read', 'READING BOARD…', '',
+                              'Matching the saved theme to your screen…')
+                self.root.update()
+                found = core.detect_theme(roi_img, self.assets_dir,
+                                          self.bottom == 'white')
+                if found is not None:
+                    self.apply_theme(*found)
+                    grid = self.rec.classify(roi_img, self.args.threshold)
+                    board, chosen = self._read_start(grid)
+            if board is None:
+                self.board = chess.Board()
+                self.pending = self.committed = None
+                self.tracking_ok, self.missed = False, 0
+                self.unknown_since = time.time()
+                self.move = None
+                self.set_view('read', 'READING BOARD…', '',
+                              'Waiting for a clear view of the board.')
             else:
-                rebuilt, chosen = core.resync(grid, self.rec.names, chess.Board(),
-                                              self.user_color)
                 self.rec.names = chosen
-                self.board = rebuilt if rebuilt is not None else chess.Board()
-                if rebuilt is None:
-                    # The first frame may show our own window over the board;
-                    # retry once the screen is readable instead of freezing.
-                    self.pending = self.committed = None
-            self.tracking_ok, self.missed = True, 0
-            self._refresh_view_for_turn()
+                self.pending = self.committed = grid
+                self.board = board
+                self.tracking_ok, self.missed = True, 0
+                self.bottom = 'white' if self.rec.names[0] == 'a8' else 'black'
+                self._save()
+                self._update_theme_label()
+                self._refresh_view_for_turn()
             self._draw_play(roi_img)
         else:
             self.set_view('read', 'WAITING FOR SCREEN', '', '')
+
+    def _read_start(self, grid):
+        """Board for the first frame, with the orientation that explains it."""
+        if core.placement_fen(grid, self.rec.names) == chess.Board().board_fen():
+            return chess.Board(), self.rec.names
+        after, _made = core.advance(chess.Board(), grid, self.rec.names)
+        if after is not None:
+            return after, self.rec.names
+        return core.resync(grid, self.rec.names, chess.Board(), self.user_color)
 
     def _refresh_view_for_turn(self):
         self.analysis_id += 1
@@ -678,10 +705,14 @@ class App:
         if self.engine is None:
             return
         self.analysis_id += 1
+        self.move = None
+        if grid is None:
+            self.set_view('read', 'READING BOARD…', '',
+                          'Waiting for a clear view of the board.')
+            return
         self.analysis_ctx = (self.analysis_id, self.board.fen(), grid)
         self.requests.put((self.analysis_id, self.board.fen(), self.user_color,
                            self.args.think, self.skill))
-        self.move = None
         self.set_view('think', 'THINKING…', '', 'Stockfish is looking…')
 
     def _engine_loop(self):
