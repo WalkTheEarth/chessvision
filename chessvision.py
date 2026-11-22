@@ -42,6 +42,7 @@ THRESHOLD = 0.60    # minimum shape correlation to call a piece
 OCC_RATIO = 0.25    # minimum colour residual (vs empty squares) to call a piece
 FILL_WEIGHT = 0.15  # tie-break weight for the piece's fill brightness
 FILL_SIGMA = 30.0   # tolerated fill-brightness difference (0-255 scale)
+HIGHLIGHT_DIST = 30.0  # corner-colour distance that marks a tinted move square
 MAX_MISREADS = 2    # squares allowed to disagree when recovering a missed move
 AUTO_RESYNC_SEC = 3.0  # how long to wait before rebuilding an unreadable position
 SKILL_DEFAULT = 20  # Stockfish Skill Level, 0-20 (20 = full strength)
@@ -186,12 +187,22 @@ class Recognizer:
     def classify(self, board_img, threshold=THRESHOLD):
         """Return 64 labels in cell order; None = empty or not confidently a piece."""
         img = cv2.resize(board_img, (WORK, WORK), interpolation=cv2.INTER_AREA)
+        cells = cell_patches(img)
+        corners = np.array([corner_colour(c) for c in cells])
+        parity = np.array([square_parity(n) for n in self.names])
+        reference = {p: np.median(corners[parity == p], axis=0) for p in (0, 1)}
         grid = []
-        for cell in cell_patches(img):
-            residual = np.linalg.norm(cell.astype(np.float32) - corner_colour(cell))
+        for cell, corner, p in zip(cells, corners, parity):
+            residual = np.linalg.norm(cell.astype(np.float32) - corner)
             shape = self.templates @ prep(cell).ravel()
-            fill = fill_brightness(cell)
-            scores = shape + FILL_WEIGHT * np.exp(-((fill - self.fills) / FILL_SIGMA) ** 2)
+            # The last-move tint changes the background brightness, which would
+            # flip a white piece to black through the fill term. Shape alone is
+            # reliable there; the fill term still separates look-alike squares.
+            if np.linalg.norm(corner - reference[p]) > HIGHLIGHT_DIST:
+                scores = shape
+            else:
+                fill = fill_brightness(cell)
+                scores = shape + FILL_WEIGHT * np.exp(-((fill - self.fills) / FILL_SIGMA) ** 2)
             k = int(scores.argmax())
             grid.append(None if (residual / self.occ_norm < OCC_RATIO
                                  or shape[k] < threshold) else self.labels[k])
@@ -458,14 +469,76 @@ class ScreenCast:
         self.conn = Gio.bus_get_sync(Gio.BusType.SESSION)
         self.sender = self.conn.get_unique_name()[1:].replace('.', '_')
         self.counter = 0
-        node, fd = self._open_portal()
+        self.mutter_session = None
+        opened = self._open_mutter()
+        if opened is None:
+            opened = self._open_portal()
+        node, fd = opened
         self.fd = fd
+        source = (f'pipewiresrc path={node} do-timestamp=true' if fd is None else
+                  f'pipewiresrc fd={fd} path={node} do-timestamp=true')
         self.pipeline = Gst.parse_launch(
-            f'pipewiresrc fd={fd} path={node} do-timestamp=true ! videoconvert ! '
+            f'{source} ! videoconvert ! '
             f'video/x-raw,format=BGR ! appsink name=sink max-buffers=1 drop=true sync=false')
         self.sink = self.pipeline.get_by_name('sink')
         self.pipeline.set_state(Gst.State.PLAYING)
         self.last = None
+
+    def _open_mutter(self):
+        """GNOME's own ScreenCast API: identical frames, no share dialog.
+
+        Private to the session but stable on GNOME 48. Falls back to the portal
+        when unavailable. shortcut: records the first monitor only; add monitor
+        selection when multi-monitor use needs it.
+        """
+        Gio, GLib = self.Gio, self.GLib
+        bus, root = 'org.gnome.Mutter.ScreenCast', '/org/gnome/Mutter/ScreenCast'
+        session = None
+        try:
+            display = self.conn.call_sync(
+                'org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
+                'org.gnome.Mutter.DisplayConfig', 'GetCurrentState',
+                None, None, Gio.DBusCallFlags.NONE, 3000, None).unpack()
+            connector = display[1][0][0][0]
+            session = self.conn.call_sync(
+                bus, root, bus, 'CreateSession',
+                GLib.Variant('(a{sv})', ({'session_id': GLib.Variant('s', f'cv{os.getpid()}')},)),
+                None, Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+            stream = self.conn.call_sync(
+                bus, session, bus + '.Session', 'RecordMonitor',
+                GLib.Variant('(sa{sv})', (connector, {})),
+                None, Gio.DBusCallFlags.NONE, 3000, None).unpack()[0]
+            node, loop = {}, GLib.MainLoop()
+
+            def on_node(conn, sender, obj, iface, signal, params):
+                node['id'] = params.unpack()[0]
+                loop.quit()
+
+            sub = self.conn.signal_subscribe(
+                bus, bus + '.Stream', 'PipeWireStreamAdded', stream, None,
+                Gio.DBusSignalFlags.NONE, on_node)
+            try:
+                self.conn.call_sync(bus, session, bus + '.Session', 'Start',
+                                    None, None, Gio.DBusCallFlags.NONE, 3000, None)
+                timeout = GLib.timeout_add_seconds(3, lambda: loop.quit() or False)
+                loop.run()
+                GLib.source_remove(timeout)
+            finally:
+                self.conn.signal_unsubscribe(sub)
+            if 'id' in node:
+                self.mutter_session = session
+                print(f'Capturing monitor {connector} through GNOME ScreenCast '
+                      '(no share prompt).', flush=True)
+                return node['id'], None
+        except Exception:
+            pass
+        if session is not None:
+            try:
+                self.conn.call_sync(bus, session, bus + '.Session', 'Stop',
+                                    None, None, Gio.DBusCallFlags.NONE, 3000, None)
+            except Exception:
+                pass
+        return None
 
     def _portal_request(self, method, make_params, options):
         Gio, GLib = self.Gio, self.GLib
@@ -549,7 +622,16 @@ class ScreenCast:
 
     def close(self):
         self.pipeline.set_state(self.Gst.State.NULL)
-        os.close(self.fd)
+        if self.mutter_session is not None:
+            try:
+                self.conn.call_sync(
+                    'org.gnome.Mutter.ScreenCast', self.mutter_session,
+                    'org.gnome.Mutter.ScreenCast.Session', 'Stop',
+                    None, None, self.Gio.DBusCallFlags.NONE, 3000, None)
+            except Exception:
+                pass
+        if self.fd is not None:
+            os.close(self.fd)
 
 
 def crop_roi(frame, roi):

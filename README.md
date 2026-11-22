@@ -27,6 +27,10 @@ the same portal). On this machine everything is already installed:
 - Board/piece PNGs in `assets/boards` and `assets/pieces` (bundled from
   [GiorgioMegrelli/chess.com-boards-and-pieces](https://github.com/GiorgioMegrelli/chess.com-boards-and-pieces), v2.x)
 
+On GNOME the app captures the first monitor through the compositor's own
+ScreenCast API, so there is no share dialog. If that API is unavailable it falls
+back to the XDG ScreenCast portal, which asks once per run.
+
 On another Debian/Ubuntu machine:
 
 ```bash
@@ -45,11 +49,13 @@ cd /home/walktheearth/chessvision
 
 On the first run (or after `--recalibrate`) the app asks for the board area:
 
-1. GNOME asks what to share. Pick the **browser window** with the chessboard
-   (recommended — then this app can overlap it safely) or the **screen**.
+1. On GNOME no share dialog appears: the app captures the first monitor directly.
+   On other desktops, pick the **browser window** with the chessboard or the screen.
 2. Drag a box around exactly the **64 squares** in the app, then click **Use board**.
    Asset mode checks your chosen piece set against the live screen and switches to a
-   clearly better-fitting set automatically. The board can be at any position.
+   clearly better-fitting set automatically. The board can be at any position. The
+   window then parks itself to the right of the board so a screen capture cannot see
+   it; on a narrow screen, move it clear of the board.
 3. The share size and theme are remembered, so later runs are just:
 
 ```bash
@@ -131,7 +137,8 @@ exits non-zero on any error.
 
 - The side never changes by itself. Only `--side` or `s` changes it.
 - If the capture source or size changed, the app says `SCREEN CHANGED` — press
-  Recalibrate. Sharing a window (not the screen) means the app can overlap it.
+  Recalibrate. The window parks itself right of the board; move it clear if your
+  screen is too narrow for that.
 - `BOARD READ LOOKS WRONG` / `CANNOT RESYNC`: usually the theme does not match the
   live screen. Open **Change**; compare “YOUR SCREEN” with “TEMPLATE PREVIEW”; press
   **Match screen** and Apply. If the live preview does not look like a chessboard,
@@ -145,8 +152,9 @@ exits non-zero on any error.
 - A rebuild from a mid-game position cannot know castling rights, so they are dropped
   (it will not suggest an illegal castle), and the side to move is inferred.
 - `Stockfish not found`: install it or pass `--engine /path/to/stockfish`.
-- No share dialog: install/restart `xdg-desktop-portal-gnome` and
-  `xdg-desktop-portal`, then log out and back in.
+- No share dialog on GNOME: expected — the app uses the compositor's ScreenCast
+  API. If capture itself fails, check `xdg-desktop-portal-gnome` and
+  `xdg-desktop-portal` (the fallback), then log out and back in.
 - Coordinates drawn inside the edge squares are cropped by the 15% cell margin;
   turning coordinates off in chess.com also helps.
 - The screen is only shared while the program runs; GNOME shows the sharing indicator.
